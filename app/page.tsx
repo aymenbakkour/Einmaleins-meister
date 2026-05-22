@@ -19,7 +19,8 @@ import {
   X,
   Divide,
   Settings,
-  Trash2
+  Trash2,
+  Lightbulb
 } from "lucide-react";
 import { Operation, Difficulty, Mode, GameResult, UserProfile, Language } from "../lib/types";
 import { useStats } from "../hooks/useStats";
@@ -99,6 +100,7 @@ export default function App() {
           {mode === "stats" && <StatsMode key="stats" stats={stats} clearStats={clearStats} setMode={setMode} language={language} />}
           {mode === "settings" && <SettingsMode key="settings" profile={profile} saveProfile={saveProfile} language={language} changeLanguage={changeLanguage} setMode={setMode} />}
           {mode === "certificate" && <CertificateMode key="certificate" profile={profile} stats={stats} language={language} />}
+          {mode === "vertical" && <VerticalMathMode key="vertical" addResult={addResult} language={language} />}
         </AnimatePresence>
       </main>
       
@@ -402,6 +404,29 @@ function HomeMenu({
             <span className="text-violet-50 mt-2 text-xs md:text-sm text-center">
               {t("printDesc")}
             </span>
+          </button>
+        </div>
+
+        <div className="mt-8 border-t border-slate-100 pt-8 w-full">
+          <button
+            onClick={() => setMode("vertical")}
+            className="w-full group relative flex flex-col sm:flex-row items-center justify-between p-6 md:p-8 bg-gradient-to-r from-amber-500 to-orange-500 rounded-3xl text-white shadow-lg hover:shadow-xl hover:-translate-y-1 transition-all"
+          >
+            <div className={`flex items-center gap-6 ${language === "ar" ? "text-right flex-row-reverse" : "text-left"}`}>
+              <div className="bg-white/20 p-4 rounded-full group-hover:scale-110 transition-transform flex-shrink-0">
+                <Calculator className="w-10 h-10" />
+              </div>
+              <div className={language === "ar" ? "text-right" : "text-left"}>
+                <span className="text-2xl font-extrabold block">{t("verticalMath")}</span>
+                <span className="text-amber-50 mt-1 text-sm block">
+                  {t("verticalMathDesc")}
+                </span>
+              </div>
+            </div>
+            <div className="mt-4 sm:mt-0 bg-white text-orange-600 px-6 py-3 rounded-full font-bold shadow-md hover:scale-105 transition-transform flex items-center gap-2">
+              <Play className="w-4 h-4 fill-current" />
+              {t("startQuiz")}
+            </div>
           </button>
         </div>
       </div>
@@ -1145,6 +1170,749 @@ function CertificateMode({ profile, stats, language }: { profile: UserProfile; s
           </div>
         </div>
       </div>
+    </motion.div>
+  );
+}
+
+interface QuestionVertical {
+  num1: number;
+  num2: number;
+  operation: "add" | "subtract";
+  answer: number;
+  digits1: number[];
+  digits2: number[];
+  answerDigits: number[];
+}
+
+function getVerticalMathHint(q: QuestionVertical, lang: Language): string {
+  if (q.operation === "add") {
+    if (lang === "ar") {
+      return `جمع عمودي مبسط:
+1. لنبدأ بجمع الآحاد (أقصى اليمين): ${q.digits1[q.digits1.length - 1]} + ${q.digits2[q.digits2.length - 1]} = ${q.digits1[q.digits1.length - 1] + q.digits2[q.digits2.length - 1]}.
+2. إذا كان الناتج 10 أو أكبر، نكتب الآحاد في الأسفل ونبدأ العمود التالي مع إضافة "1 باليد" في الأعلى.
+3. المجموع النهائي هو: ${q.answer}`;
+    } else {
+      return `Schriftliche Addition Hilfe:
+1. Addiere zuerst ganz rechts die Einer: ${q.digits1[q.digits1.length - 1]} + ${q.digits2[q.digits2.length - 1]} = ${q.digits1[q.digits1.length - 1] + q.digits2[q.digits2.length - 1]}.
+2. Falls die Summe 10 oder mehr ist, schreibe die Einer unten auf und merke dir 1 als Übertrag für die nächste Spalte.
+3. Das Endergebnis lautet: ${q.answer}`;
+    }
+  } else {
+    if (lang === "ar") {
+      return `طرح عمودي مبسط:
+1. لنبدأ بطرح الآحاد (أقصى اليمين): ${q.digits1[q.digits1.length - 1]} - ${q.digits2[q.digits2.length - 1]}.
+2. إذا كانت الخانة العلوية أصغر من السفلية، نقوم بالاستلاف من العشرات لتصبح الآحاد ${q.digits1[q.digits1.length - 1] + 10} ثم نطرح لتسهيل العملية.
+3. الناتج النهائي هو: ${q.answer}`;
+    } else {
+      return `Schriftliche Subtraktion Hilfe:
+1. Subtrahiere zuerst ganz rechts die Einer: ${q.digits1[q.digits1.length - 1]} - ${q.digits2[q.digits2.length - 1]}.
+2. Ist die obere Ziffer kleiner, leihe dir 1 von links, sodass du stattdessen ${q.digits1[q.digits1.length - 1] + 10} rechnest.
+3. Das Endergebnis lautet: ${q.answer}`;
+    }
+  }
+}
+
+const getCorrectCarriesOrBorrows = (q: QuestionVertical): string[] => {
+  const digits1 = [...q.digits1];
+  const digits2 = [...q.digits2];
+  const len = digits1.length;
+  
+  const res: string[] = Array(len).fill("");
+  if (q.operation === "add") {
+    let carry = 0;
+    for (let i = len - 1; i >= 0; i--) {
+      const sum = digits1[i] + digits2[i] + carry;
+      if (sum >= 10) {
+        carry = Math.floor(sum / 10);
+        if (i - 1 >= 0) {
+          res[i - 1] = String(carry);
+        }
+      } else {
+        carry = 0;
+      }
+    }
+  } else {
+    const d1 = [...digits1];
+    for (let i = len - 1; i >= 0; i--) {
+      if (d1[i] < digits2[i]) {
+        if (i - 1 >= 0) {
+          d1[i - 1] -= 1;
+          res[i - 1] = String(d1[i - 1]);
+          res[i] = String(d1[i] + 10);
+        }
+      }
+    }
+  }
+  return res;
+};
+
+function VerticalMathMode({
+  addResult,
+  language,
+}: {
+  addResult: (result: GameResult) => void;
+  language: Language;
+}) {
+  const { t } = useTranslation(language);
+  const [activeTab, setActiveTab] = useState<"learn" | "quiz">("learn");
+  const [selectedOp, setSelectedOp] = useState<"add" | "subtract">("add");
+  const [selectedType, setSelectedType] = useState<"tens" | "hundreds" | "thousands">("tens");
+
+  // Stepper state for learning
+  const [learnStep, setLearnStep] = useState(0);
+
+  // Quiz state
+  const [quizScore, setQuizScore] = useState(0);
+  const [quizIndex, setQuizIndex] = useState(0);
+  const [quizFinished, setQuizFinished] = useState(false);
+  const [userAnswer, setUserAnswer] = useState("");
+  const [feedback, setFeedback] = useState<"correct" | "incorrect" | null>(null);
+  const [currentQuestion, setCurrentQuestion] = useState<QuestionVertical | null>(null);
+  const [starsAwarded, setStarsAwarded] = useState(0);
+  const [showHint, setShowHint] = useState(false);
+
+  // Carry overs interactive helper states for child (optional helper inputs)
+  const [userCarries, setUserCarries] = useState<string[]>(["", "", "", ""]);
+
+  const generateNumbers = (op: "add" | "subtract", type: "tens" | "hundreds" | "thousands"): QuestionVertical => {
+    let min = 10, max = 99;
+    if (type === "hundreds") { min = 100; max = 999; }
+    if (type === "thousands") { min = 1000; max = 9999; }
+
+    let num1 = Math.floor(Math.random() * (max - min + 1)) + min;
+    let num2 = Math.floor(Math.random() * (max - min + 1)) + min;
+
+    // Ensure no negative results for subtraction
+    if (op === "subtract" && num1 < num2) {
+      const temp = num1;
+      num1 = num2;
+      num2 = temp;
+    }
+
+    const answer = op === "add" ? num1 + num2 : num1 - num2;
+
+    const padDigits = (num: number, length: number) => {
+      const arr = String(num).split("").map(Number);
+      while (arr.length < length) {
+        arr.unshift(0);
+      }
+      return arr;
+    };
+
+    const displayLength = Math.max(String(num1).length, String(num2).length, String(answer).length);
+
+    return {
+      num1,
+      num2,
+      operation: op,
+      answer,
+      digits1: padDigits(num1, displayLength),
+      digits2: padDigits(num2, displayLength),
+      answerDigits: padDigits(answer, displayLength),
+    };
+  };
+
+  const startNewQuiz = () => {
+    setQuizScore(0);
+    setQuizIndex(0);
+    setQuizFinished(false);
+    setFeedback(null);
+    setUserAnswer("");
+    setUserCarries(["", "", "", ""]);
+    setShowHint(false);
+    const q = generateNumbers(selectedOp, selectedType);
+    setCurrentQuestion(q);
+  };
+
+  const handleNextQuizQuestion = () => {
+    setFeedback(null);
+    setUserAnswer("");
+    setUserCarries(["", "", "", ""]);
+    setShowHint(false);
+    if (quizIndex < 4) {
+      setQuizIndex(curr => curr + 1);
+      const q = generateNumbers(selectedOp, selectedType);
+      setCurrentQuestion(q);
+    } else {
+      setQuizFinished(true);
+      const finalScore = quizScore;
+      let stars = 0;
+      if (finalScore === 5) stars = 3;
+      else if (finalScore >= 4) stars = 2;
+      else if (finalScore >= 3) stars = 1;
+
+      setStarsAwarded(stars);
+
+      addResult({
+        id: Date.now().toString(),
+        date: new Date().toISOString(),
+        operation: selectedOp === "add" ? "add" : "subtract",
+        difficulty: selectedType === "tens" ? "easy" : selectedType === "hundreds" ? "medium" : "hard",
+        score: finalScore,
+        total: 5,
+        stars,
+      });
+    }
+  };
+
+  const checkAnswer = () => {
+    if (!currentQuestion || feedback) return;
+    const isCorrect = parseInt(userAnswer) === currentQuestion.answer;
+    if (isCorrect) {
+      setFeedback("correct");
+      setQuizScore(prev => prev + 1);
+    } else {
+      setFeedback("incorrect");
+    }
+  };
+
+  // Stepper generation for Learn Section
+  const learnStepsAdd = [
+    {
+      title_de: "Schritt 1: Stellenwert-Tabelle zeichnen",
+      title_ar: "الخطوة 1: ترتيب المنازل في الجدول",
+      desc_de: "Schreibe die Zahlen genau untereinander auf. Hunderter unter Hunderter, Zehner unter Zehner und Einer unter Einer. Ziehe darunter eine Linie.",
+      desc_ar: "نكتب الأرقام عمودياً بدقة وبترتيب صحيح، بحيث تكون منزلة الآحاد تحت الآحاد، والعشرات تحت العشرات، والمئات تحت المئات.",
+      num1: 158,
+      num2: 274,
+      carries: ["", "", ""],
+      sumDigits: ["", "", ""],
+      activeCol: -1,
+    },
+    {
+      title_de: "Schritt 2: Die Einer addieren (8 + 4)",
+      title_ar: "الخطوة 2: جمع منزلة الآحاد (8 + 4)",
+      desc_de: "Rechne: 8 + 4 = 12. Die Zahl 12 besteht aus 1 Zehner und 2 Einern. Schreibe die 2 unten auf und merke dir die 1 als Übertrag für die Zehner-Spalte.",
+      desc_ar: "نحسب: 8 + 4 = 12. الرقم 12 يتكون من 2 آحاد و 1 عشرات. نكتب 2 في الأسفل، ونحتفظ بالـ 1 (باليد) فوق منزلة العشرات.",
+      num1: 158,
+      num2: 274,
+      carries: ["", "1", ""],
+      sumDigits: ["", "", "2"],
+      activeCol: 2,
+    },
+    {
+      title_de: "Schritt 3: Die Zehner addieren (1 + 5 + 7)",
+      title_ar: "الخطوة 3: جمع العشرات مع الـ (باليد) (1 + 5 + 7)",
+      desc_de: "Rechne: 1 (Übertrag) + 5 + 7 = 13 Zehner. Das sind 1 Hunderter (Übertrag) und 3 Zehner. Schreibe die 3 unten auf und nimm die 1 mit zur Hunderter-Spalte.",
+      desc_ar: "نحسب: 1 (باليد) + 5 + 7 = 13. نكتب الرقم 3 تحت منزلة العشرات، ونقوم بنقل الرقم 1 (باليد) فوق منزلة المئات.",
+      num1: 158,
+      num2: 274,
+      carries: ["1", "1", ""],
+      sumDigits: ["", "3", "2"],
+      activeCol: 1,
+    },
+    {
+      title_de: "Schritt 4: Die Hunderter addieren (1 + 1 + 2)",
+      title_ar: "الخطوة 4: جمع منزلة المئات (1 + 1 + 2)",
+      desc_de: "Rechne: 1 (Übertrag) + 1 + 2 = 4 Hunderter. Schreibe die 4 unten auf. Damit ist deine schriftliche Addition komplett! Das Ergebnis lautet: 432.",
+      desc_ar: "نحسب: 1 (باليد) + 1 + 2 = 4. نكتب الرقم 4 تحت منزلة المئات. وبذلك تكون عملية الجمع قد اكتملت بنجاح والناتج النهائي هو: 432.",
+      num1: 158,
+      num2: 274,
+      carries: ["1", "1", ""],
+      sumDigits: ["4", "3", "2"],
+      activeCol: 0,
+    }
+  ];
+
+  const learnStepsSub = [
+    {
+      title_de: "Schritt 1: Stellenwert-Tabelle aufstellen",
+      title_ar: "الخطوة 1: ترتيب الأرقام في الجدول",
+      desc_de: "Schreibe die größere Zahl oben und die kleinere Zahl genau darunter auf. Ziehe eine Linie und bereite dich darauf vor, von rechts nach links zu rechnen.",
+      desc_ar: "نضع الرقم الأكبر في الأعلى والرقم الأصغر في الأسفل، ثم نرتب المنازل (الآحاد تحت الآحاد، والعشرات تحت العشرات، وهكذا).",
+      num1: 432,
+      num2: 158,
+      borrows: ["", "", ""],
+      resultDigits: ["", "", ""],
+      activeCol: -1,
+    },
+    {
+      title_de: "Schritt 2: Die Einer subtrahieren (2 - 8)",
+      title_ar: "الخطوة 2: طرح الآحاد والاستلاف (2 - 8)",
+      desc_de: "Da 2 kleiner ist als 8, müssen wir entleihen! Wir leihen 1 Zehner von der linken Spalte (der 3). Die 3 wird zu 2, und unsere 2 wird zu 12. Rechne jetzt: 12 - 8 = 4.",
+      desc_ar: "بما أن 2 أصغر من 8، لا يمكن الطرح! نستلف 1 عشرة من خانة العشرات المجاورة (3 تصبح 2)، وتصبح الـ 2 لدينا 12. الآن نحسب: 12 - 8 = 4.",
+      num1: 432,
+      num2: 158,
+      borrows: ["", "2", "12"],
+      resultDigits: ["", "", "4"],
+      activeCol: 2,
+    },
+    {
+      title_de: "Schritt 3: Die Zehner subtrahieren (2 - 5)",
+      title_ar: "الخطوة 3: طرح العشرات والاستلاف مجدداً (2 - 5)",
+      desc_de: "Da 2 (neuer Zehnerwert) kleiner ist als 5, leihen wir wieder 1 Hunderter von der linken Spalte (der 4). Die 4 wird zu 3, und die 2 wird zu 12 Zehnern. Rechne: 12 - 5 = 7.",
+      desc_ar: "بما أن الـ 2 المتبقية في العشرات أصغر من 5، نستلف 1 من خانة المئات (4 تصبح 3)، وتصبح الـ 2 لدينا 12. الآن ونطرح: 12 - 5 = 7.",
+      num1: 432,
+      num2: 158,
+      borrows: ["3", "12", "12"],
+      resultDigits: ["", "7", "4"],
+      activeCol: 1,
+    },
+    {
+      title_de: "Schritt 4: Die Hunderter subtrahieren (3 - 1)",
+      title_ar: "الخطوة 4: طرح المئات والحصول على الناتج (3 - 1)",
+      desc_de: "Unter den Hundertern rechnen wir nun ganz einfach: 3 - 1 = 2 Hunderter. Dein Ergebnis ist fertig: 274!",
+      desc_ar: "في منزلة المئات الآن نطرح ببساطة: 3 - 1 = 2. نكتب الرقم 2 في تاحيت خانة المئات والناتج النهائي للمسألة بأكملها هو: 274.",
+      num1: 432,
+      num2: 158,
+      borrows: ["3", "12", "12"],
+      resultDigits: ["2", "7", "4"],
+      activeCol: 0,
+    }
+  ];
+
+  useEffect(() => {
+    setLearnStep(0);
+    startNewQuiz();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedOp, selectedType, activeTab]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -20 }}
+      className="max-w-4xl mx-auto w-full pt-4"
+    >
+      {/* Tab Selectors */}
+      <div className="flex flex-col sm:flex-row justify-between items-center bg-white p-4 rounded-3xl shadow-md border border-sky-100 gap-4 mb-6">
+        <div className="flex gap-2">
+          <button
+            onClick={() => setActiveTab("learn")}
+            className={`px-6 py-2 rounded-full font-bold transition-all ${
+              activeTab === "learn" ? "bg-amber-500 text-white shadow-md scale-105" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+            }`}
+          >
+            {t("explanation")}
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab("quiz");
+              startNewQuiz();
+            }}
+            className={`px-6 py-2 rounded-full font-bold transition-all ${
+              activeTab === "quiz" ? "bg-amber-500 text-white shadow-md scale-105" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+            }`}
+          >
+            {t("test")}
+          </button>
+        </div>
+
+        <div className="flex items-center gap-4">
+          {/* Operation select */}
+          <div className="flex bg-slate-100 p-1 rounded-full border border-slate-200">
+            <button
+              onClick={() => setSelectedOp("add")}
+              className={`px-4 py-1.5 rounded-full font-bold text-sm transition-all ${
+                selectedOp === "add" ? "bg-white text-emerald-600 shadow-sm" : "text-slate-500 hover:text-slate-800"
+              }`}
+            >
+              +
+            </button>
+            <button
+              onClick={() => setSelectedOp("subtract")}
+              className={`px-4 py-1.5 rounded-full font-bold text-sm transition-all ${
+                selectedOp === "subtract" ? "bg-white text-red-600 shadow-sm" : "text-slate-500 hover:text-slate-800"
+              }`}
+            >
+              -
+            </button>
+          </div>
+
+          {/* Number Type/Range select */}
+          <div className="flex bg-slate-100 p-1 rounded-full border border-slate-200 select-none">
+            {(["tens", "hundreds", "thousands"] as const).map(type => (
+              <button
+                key={type}
+                onClick={() => setSelectedType(type)}
+                className={`px-3 py-1.5 rounded-full font-bold text-xs transition-all ${
+                  selectedType === type ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                {t(type)}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {activeTab === "learn" ? (
+        <div className="grid md:grid-cols-2 gap-8 items-stretch">
+          {/* Explanation panel */}
+          <div className="bg-white p-8 rounded-3xl shadow-xl border border-sky-100 flex flex-col justify-between">
+            <div>
+              <div className="flex items-center gap-3 mb-6">
+                <div className="p-3 bg-amber-100 text-amber-600 rounded-2xl">
+                  <GraduationCap className="w-8 h-8" />
+                </div>
+                <div>
+                  <h3 className="text-2xl font-extrabold text-slate-800">
+                    {selectedOp === "add" ? t("verticalAdd") : t("verticalSub")}
+                  </h3>
+                  <span className="text-sm text-slate-400 font-bold uppercase tracking-wider">
+                    {t(selectedType)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="text-lg text-slate-600 mb-6 leading-relaxed">
+                {selectedOp === "add" ? t("additionExplanation") : t("subtractionExplanation")}
+              </div>
+
+              <div className="border-t border-slate-100 pt-6">
+                <h4 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-amber-500" />
+                  {t("stepByStep")}
+                </h4>
+                <div className="mt-2 bg-slate-50 p-5 rounded-2xl border border-slate-200">
+                  <h5 className="font-extrabold text-slate-800 text-lg mb-2">
+                    {language === "de" 
+                      ? (selectedOp === "add" ? learnStepsAdd[learnStep].title_de : learnStepsSub[learnStep].title_de)
+                      : (selectedOp === "add" ? learnStepsAdd[learnStep].title_ar : learnStepsSub[learnStep].title_ar)
+                    }
+                  </h5>
+                  <p className="text-sm text-slate-600 leading-relaxed">
+                    {language === "de"
+                      ? (selectedOp === "add" ? learnStepsAdd[learnStep].desc_de : learnStepsSub[learnStep].desc_de)
+                      : (selectedOp === "add" ? learnStepsAdd[learnStep].desc_ar : learnStepsSub[learnStep].desc_ar)
+                    }
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-between items-center mt-8 border-t border-slate-100 pt-6">
+              <button
+                onClick={() => setLearnStep(curr => Math.max(0, curr - 1))}
+                disabled={learnStep === 0}
+                className="px-5 py-2.5 rounded-xl border border-slate-200 font-bold text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50 transition-all select-none"
+              >
+                {t("back")}
+              </button>
+              <div className="flex gap-1.5" dir="ltr">
+                {[0, 1, 2, 3].map(step => (
+                  <div
+                    key={step}
+                    className={`h-2.5 w-2.5 rounded-full transition-all duration-300 ${
+                      learnStep === step ? "bg-amber-500 w-6" : "bg-slate-200"
+                    }`}
+                  />
+                ))}
+              </div>
+              <button
+                onClick={() => setLearnStep(curr => Math.min(3, curr + 1))}
+                disabled={learnStep === 3}
+                className="px-5 py-2.5 rounded-xl bg-amber-500 text-white font-bold text-sm hover:bg-amber-600 disabled:opacity-50 transition-all select-none"
+              >
+                {t("nextQuestion")}
+              </button>
+            </div>
+          </div>
+
+          {/* Interactive vertical alignment animation demo */}
+          <div className="bg-white p-8 rounded-3xl shadow-xl border border-sky-100 flex flex-col items-center justify-center">
+            <h4 className="text-sm font-bold text-slate-400 mb-8 uppercase tracking-widest">{t("columns")}</h4>
+            <div className="relative font-mono text-4xl font-bold text-slate-800 flex flex-col items-end gap-2 p-6 bg-slate-50 rounded-3xl border border-slate-200 shadow-inner w-full max-w-sm" dir="ltr">
+              
+              {/* Carry Over row */}
+              <div className="flex w-full justify-end border-b border-dashed border-slate-200 pb-2 text-sm text-red-500 font-extrabold h-8" dir="ltr">
+                {selectedOp === "add" ? (
+                  <>
+                    <div className={`w-12 text-center ${learnStepsAdd[learnStep].activeCol === 0 ? "scale-125 text-red-600 font-black animate-bounce" : ""}`}>
+                      {learnStepsAdd[learnStep].carries[0]}
+                    </div>
+                    <div className={`w-12 text-center ${learnStepsAdd[learnStep].activeCol === 1 ? "scale-125 text-red-600 font-black animate-bounce" : ""}`}>
+                      {learnStepsAdd[learnStep].carries[1]}
+                    </div>
+                    <div className={`w-12 text-center ${learnStepsAdd[learnStep].activeCol === 2 ? "scale-125 text-red-600 font-black animate-bounce" : ""}`}>
+                      {learnStepsAdd[learnStep].carries[2]}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className={`w-12 text-center flex items-center justify-center ${learnStepsSub[learnStep].activeCol === 0 ? "scale-125 text-rose-600 font-black animate-pulse" : ""}`}>
+                      {learnStepsSub[learnStep].borrows[0] && (
+                        <span className="bg-rose-100 text-rose-600 px-1 rounded border border-rose-200 text-xs">
+                          {learnStepsSub[learnStep].borrows[0]}
+                        </span>
+                      )}
+                    </div>
+                    <div className={`w-12 text-center flex items-center justify-center ${learnStepsSub[learnStep].activeCol === 1 ? "scale-125 text-rose-600 font-black animate-pulse" : ""}`}>
+                      {learnStepsSub[learnStep].borrows[1] && (
+                        <span className="bg-rose-100 text-rose-600 px-1 rounded border border-rose-200 text-xs">
+                          {learnStepsSub[learnStep].borrows[1]}
+                        </span>
+                      )}
+                    </div>
+                    <div className={`w-12 text-center flex items-center justify-center ${learnStepsSub[learnStep].activeCol === 2 ? "scale-125 text-rose-600 font-black animate-pulse" : ""}`}>
+                      {learnStepsSub[learnStep].borrows[2] && (
+                        <span className="bg-rose-100 text-rose-600 px-1 rounded border border-rose-200 text-xs">
+                          {learnStepsSub[learnStep].borrows[2]}
+                        </span>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Number 1 Row */}
+              <div className="flex w-full justify-end select-none h-12 items-center" dir="ltr">
+                <div className={`w-12 text-center ${learnStep >= 1 && ((selectedOp === "add" && learnStepsAdd[learnStep].activeCol === 0) || (selectedOp === "subtract" && learnStepsSub[learnStep].activeCol === 0)) ? "text-amber-600 scale-110" : "text-slate-700"}`} dir="ltr">
+                  {selectedOp === "add" ? "1" : "4"}
+                </div>
+                <div className={`w-12 text-center ${learnStep >= 2 && ((selectedOp === "add" && learnStepsAdd[learnStep].activeCol === 1) || (selectedOp === "subtract" && learnStepsSub[learnStep].activeCol === 1)) ? "text-amber-600 scale-110" : "text-slate-700"}`} dir="ltr">
+                  {selectedOp === "add" ? "5" : "3"}
+                </div>
+                <div className={`w-12 text-center ${learnStep >= 1 && ((selectedOp === "add" && learnStepsAdd[learnStep].activeCol === 2) || (selectedOp === "subtract" && learnStepsSub[learnStep].activeCol === 2)) ? "text-amber-600 scale-110" : "text-slate-700"}`} dir="ltr">
+                  {selectedOp === "add" ? "8" : "2"}
+                </div>
+              </div>
+
+              {/* Number 2 Row with Operator */}
+              <div className="flex w-full justify-between select-none h-12 items-center border-b-4 border-slate-700 pb-2 relative font-sans" dir="ltr">
+                <div className="text-4xl text-slate-500 absolute left-2 font-mono" dir="ltr">
+                  {selectedOp === "add" ? "+" : "-"}
+                </div>
+                <div />
+                <div className="flex" dir="ltr">
+                  <div className="w-12 text-center text-slate-600">1</div>
+                  <div className="w-12 text-center text-slate-600">5</div>
+                  <div className="w-12 text-center text-slate-600">8</div>
+                </div>
+              </div>
+
+              {/* Final Result Row */}
+              <div className="flex w-full justify-end font-extrabold text-emerald-600 h-14 items-center animate-pulse" dir="ltr">
+                {selectedOp === "add" ? (
+                  <>
+                    <div className="w-12 text-center">{learnStepsAdd[learnStep].sumDigits[0]}</div>
+                    <div className="w-12 text-center">{learnStepsAdd[learnStep].sumDigits[1]}</div>
+                    <div className="w-12 text-center">{learnStepsAdd[learnStep].sumDigits[2]}</div>
+                  </>
+                ) : (
+                  <>
+                    <div className="w-12 text-center">{learnStepsSub[learnStep].resultDigits[0]}</div>
+                    <div className="w-12 text-center">{learnStepsSub[learnStep].resultDigits[1]}</div>
+                    <div className="w-12 text-center">{learnStepsSub[learnStep].resultDigits[2]}</div>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : quizFinished ? (
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="flex flex-col items-center justify-center pt-12"
+        >
+          <div className="bg-white p-10 rounded-3xl shadow-xl text-center max-w-md w-full border border-sky-100">
+            <div className="flex justify-center gap-2 mb-6">
+              {[1, 2, 3].map((star) => (
+                <motion.div
+                  key={star}
+                  initial={{ scale: 0, rotate: -180 }}
+                  animate={{ scale: 1, rotate: 0 }}
+                  transition={{ delay: star * 0.2, type: "spring" }}
+                >
+                  <Star
+                    className={`w-12 h-12 ${
+                      star <= starsAwarded ? "text-amber-400 fill-current" : "text-slate-200"
+                    }`}
+                  />
+                </motion.div>
+              ))}
+            </div>
+            <h2 className="text-3xl font-bold text-slate-800 mb-2">{t("testFinished")}</h2>
+            <p className="text-lg text-slate-600 mb-8">
+              {t("testResult", { score: quizScore, total: 5 })}
+            </p>
+
+            <div className="w-full bg-slate-100 rounded-full h-4 mb-8 overflow-hidden" dir="ltr">
+              <motion.div
+                initial={{ width: 0 }}
+                animate={{ width: `${(quizScore / 5) * 100}%` }}
+                className={`h-full ${quizScore > 3 ? "bg-emerald-500" : quizScore > 1 ? "bg-yellow-400" : "bg-red-400"}`}
+              />
+            </div>
+
+            <p className="text-xl font-medium mb-8">
+              {quizScore === 5 ? t("perfect") : quizScore >= 4 ? t("great") : quizScore >= 3 ? t("good") : t("tryAgain")}
+            </p>
+
+            <button
+              onClick={startNewQuiz}
+              className="flex items-center justify-center w-full gap-2 py-4 bg-amber-500 hover:bg-amber-600 text-white rounded-2xl text-lg font-bold transition-colors shadow-md animate-bounce"
+            >
+              <RotateCcw className={`w-6 h-6 ${language === "ar" ? "rotate-180" : ""}`} />
+              {t("playAgain")}
+            </button>
+          </div>
+        </motion.div>
+      ) : (
+        <div className="flex flex-col items-center justify-center gap-6">
+          <div className="w-full max-w-xl flex justify-between items-center mb-2 px-4">
+            <span className="text-slate-500 font-bold text-lg">
+              {t("questionOf", { current: quizIndex + 1, total: 5 })}
+            </span>
+            <div className="flex gap-2 bg-white px-4 py-2 rounded-full shadow-md border border-slate-100">
+              <Star className="text-amber-400 fill-current w-5 h-5" />
+              <span className="font-extrabold text-slate-800">{quizScore} / 5</span>
+            </div>
+          </div>
+
+          <div className="w-full max-w-xl bg-white p-8 md:p-12 rounded-3xl shadow-xl flex flex-col items-center justify-center border border-sky-100">
+            {currentQuestion && (
+              <div className="relative font-mono text-4xl md:text-5xl font-bold text-slate-800 flex flex-col items-end gap-3 p-8 bg-slate-50 rounded-3xl border border-slate-200 shadow-inner w-full max-w-sm select-none" dir="ltr">
+                
+                {/* Visual grid labels (Optional assistance) */}
+                <div className="absolute top-1 left-2 text-xs text-slate-300 font-sans tracking-widest hidden sm:block">
+                  GRID VIEW
+                </div>
+
+                {/* Optional helper carry rows for kid inputs */}
+                <div className="flex w-full justify-end border-b border-dashed border-slate-200 pb-2 text-sm text-red-500 font-extrabold h-10 items-end" dir="ltr">
+                  {userCarries.slice(0, currentQuestion.digits1.length).map((val, idx) => (
+                    <div key={idx} className="w-12 h-10 flex items-center justify-center">
+                      <input
+                        type="text"
+                        maxLength={2}
+                        placeholder="..."
+                        value={val}
+                        onChange={(e) => {
+                          const next = [...userCarries];
+                          next[idx] = e.target.value.replace(/[^0-9]/g, "");
+                          setUserCarries(next);
+                        }}
+                        className="w-10 h-8 text-center bg-red-50 border border-slate-200 rounded text-red-600 font-bold focus:border-red-400 outline-none text-xs transition-colors"
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                {/* Number 1 Row */}
+                <div className="flex w-full justify-end select-none h-14 items-center tracking-normal" dir="ltr">
+                  {currentQuestion.digits1.map((d, i) => (
+                    <div key={i} className="w-12 text-center text-slate-800">
+                      {d}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Number 2 Row with Operator Sign */}
+                <div className="flex w-full justify-between select-none h-14 items-center border-b-4 border-slate-700 pb-3 relative font-sans tracking-normal" dir="ltr">
+                  <div className="text-4xl text-slate-500 absolute left-2 font-mono" dir="ltr">
+                    {currentQuestion.operation === "add" ? "+" : "-"}
+                  </div>
+                  <div />
+                  <div className="flex" dir="ltr">
+                    {currentQuestion.digits2.map((d, i) => (
+                      <div key={i} className="w-12 text-center text-slate-700">
+                        {d}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* User typed Final Answer Input Area on bottom vertically aligned */}
+                <div className="w-full flex justify-end py-4">
+                  <input
+                    type="text"
+                    value={userAnswer}
+                    onChange={(e) => {
+                      if (!feedback) {
+                        setUserAnswer(e.target.value.replace(/[^0-9]/g, ""));
+                      }
+                    }}
+                    placeholder={language === "ar" ? "الناتج؟" : "Ergebnis?"}
+                    className={`w-full max-w-xs text-center border-3 px-4 py-3 rounded-2xl outline-none font-bold text-3xl transition-all font-mono leading-none ${
+                      feedback === "correct"
+                        ? "bg-emerald-50 border-emerald-500 text-emerald-600 shadow-md"
+                        : feedback === "incorrect"
+                        ? "bg-red-50 border-red-500 text-red-600 shadow-sm"
+                        : "border-slate-300 focus:border-amber-500 focus:ring-4 focus:ring-amber-200 bg-white"
+                    }`}
+                    disabled={feedback !== null}
+                    autoFocus
+                  />
+                </div>
+              </div>
+            )}
+
+            {showHint && currentQuestion && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mt-6 p-5 bg-amber-50 border border-amber-200 text-amber-900 rounded-3xl text-sm leading-relaxed w-full max-w-sm"
+              >
+                <div className="flex gap-3 items-start">
+                  <Lightbulb className="w-6 h-6 text-amber-500 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-extrabold text-slate-800 block mb-1">
+                      {language === "ar" ? "مساعد عبقري الرياضيات:" : "Dein schlaues Mathe-Helferlein:"}
+                    </span>
+                    <p className="whitespace-pre-line text-xs font-semibold text-slate-700">
+                      {getVerticalMathHint(currentQuestion, language)}
+                    </p>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {feedback && (
+              <div className="mt-6 flex items-center justify-center gap-2">
+                {feedback === "correct" ? (
+                  <div className="flex items-center gap-2 text-emerald-600 font-bold text-lg select-none">
+                    <CheckCircle2 className="w-6 h-6 animate-bounce" />
+                    <span>{t("correct")}</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-red-600 font-bold text-lg select-none">
+                    <XCircle className="w-6 h-6 animate-shake" />
+                    <span>{t("wrong")} ({currentQuestion?.answer})</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="w-full mt-8 flex flex-col sm:flex-row gap-4">
+              {!feedback && currentQuestion && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowHint(true);
+                    const correctCarries = getCorrectCarriesOrBorrows(currentQuestion);
+                    setUserCarries(correctCarries);
+                  }}
+                  className="py-4 px-6 bg-amber-100 hover:bg-amber-200 text-amber-700 rounded-2xl font-bold text-sm transition-colors flex items-center justify-center gap-2 select-none"
+                >
+                  <Lightbulb className="w-5 h-5" />
+                  <span>{t("hint")}</span>
+                </button>
+              )}
+
+              {!feedback ? (
+                <button
+                  type="button"
+                  onClick={checkAnswer}
+                  disabled={!userAnswer}
+                  className="flex-1 py-4 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white rounded-2xl font-bold text-lg transition-colors shadow-md select-none"
+                >
+                  {t("submitAnswer")}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleNextQuizQuestion}
+                  className="flex-1 py-4 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl font-bold text-lg transition-colors shadow-md select-none"
+                >
+                  {t("nextQuestion")}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </motion.div>
   );
 }

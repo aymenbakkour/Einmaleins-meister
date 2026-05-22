@@ -1,6 +1,6 @@
 export type Operation = "multiply" | "divide" | "add" | "subtract";
 export type Difficulty = "easy" | "medium" | "hard";
-export type Mode = "home" | "learn" | "test" | "print" | "stats" | "certificate" | "settings";
+export type Mode = "home" | "learn" | "test" | "print" | "stats" | "certificate" | "settings" | "vertical";
 export type Language = "de" | "ar";
 
 export interface UserProfile {
